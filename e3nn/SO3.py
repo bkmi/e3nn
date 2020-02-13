@@ -329,7 +329,7 @@ def spherical_harmonics_xyz(order, xyz, sph_last=False, dtype=None, device=None)
     if not torch.is_tensor(xyz):
         xyz = torch.tensor(xyz, dtype=torch.float64)
 
-    with torch_default_dtype(torch.float64):
+    with torch_default_dtype(dtype):
         if device.type == 'cuda' and max(order) <= 10:
             max_l = max(order)
             out = xyz.new_empty(((max_l + 1)*(max_l + 1), xyz.size(0)))  # [ filters, batch_size]
