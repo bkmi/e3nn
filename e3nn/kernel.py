@@ -191,7 +191,8 @@ class KernelFn(torch.autograd.Function):
                     C = SO3.clebsch_gordan(l_out, l_in, l_filter, cached=True, like=kernel)  # [m_out, m_in, m]
 
                     # note: The multiplication with `sub_R` could also be done outside of the for loop
-                    K += torch.einsum("ijk,kz,zuv,z->zuivj", (C, sub_Y, sub_R[..., k], sub_norm_coef))  # [batch, mul_out, m_out, mul_in, m_in]
+                    K_mid = torch.einsum("ijk,kz,z->zij", C, sub_Y, sub_norm_coef)  # [batch, m_out, m_in]
+                    K += torch.einsum('zij,zuv->zuivj', K_mid, sub_R[..., k])  # [batch, mul_out, m_out, mul_in, m_in]
 
                 if K is not 0:
                     kernel[:, s_out, s_in] = K.contiguous().view_as(kernel[:, s_out, s_in])
