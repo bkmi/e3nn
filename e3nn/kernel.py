@@ -157,6 +157,7 @@ class KernelFn(torch.autograd.Function):
         n_out = SO3.dimRs(ctx.Rs_out)
 
         kernel = Y.new_zeros(batch, n_out, n_in)
+        torch.cuda.empty_cache()
 
         # note: for the normalization we assume that the variance of R[i] is one
         begin_R = 0
@@ -249,3 +250,23 @@ class KernelFn(torch.autograd.Function):
 
         del ctx
         return grad_Y, grad_R, None, None, None, None, None
+
+
+class HalfKernel(Kernel):
+    def __init__(self, *args, **kwargs):
+        super(HalfKernel, self).__init__(*args, **kwargs)
+
+    def forward(self, r):
+        *size, xyz = r.size()
+        assert xyz == 3
+        r = r.reshape(-1, 3)
+        dim = r.size(0)
+
+        r1 = r[:dim//2, ...]
+        kern1 = super(HalfKernel, self).forward(r1)
+
+        r2 = r[dim//2:, ...]
+        kern2 = super(HalfKernel, self).forward(r2)
+        kernel = torch.cat([kern1, kern2], dim=0)
+        return kernel.view(*size, kernel.shape[1], kernel.shape[2])
+
