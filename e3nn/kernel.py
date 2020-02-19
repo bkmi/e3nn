@@ -124,7 +124,57 @@ class Kernel(torch.nn.Module):
         norm_coef = getattr(self, 'norm_coef')
         norm_coef = norm_coef[:, :, (radii == 0).type(torch.long)]  # [l_out, l_in, batch]
 
-        kernel = KernelFn.apply(Y, R, norm_coef, self.Rs_in, self.Rs_out, self.get_l_filters, self.set_of_l_filters)
+        batch = Y.shape[1]
+        n_in = SO3.dimRs(self.Rs_in)
+        n_out = SO3.dimRs(self.Rs_out)
+
+        kernel = Y.new_zeros(batch, n_out, n_in)
+        torch.cuda.empty_cache() # TODO This function can really slow things down, but it also might help.
+
+        # note: for the normalization we assume that the variance of R[i] is one
+        begin_R = 0
+
+        begin_out = 0
+        for i, (mul_out, l_out, p_out) in enumerate(self.Rs_out):
+            s_out = slice(begin_out, begin_out + mul_out * (2 * l_out + 1))
+            begin_out += mul_out * (2 * l_out + 1)
+
+            begin_in = 0
+            for j, (mul_in, l_in, p_in) in enumerate(self.Rs_in):
+                s_in = slice(begin_in, begin_in + mul_in * (2 * l_in + 1))
+                begin_in += mul_in * (2 * l_in + 1)
+
+                l_filters = self.get_l_filters(l_in, p_in, l_out, p_out)
+                if not l_filters:
+                    continue
+
+                # extract the subset of the `R` that corresponds to the couple (l_out, l_in)
+                n = mul_out * mul_in * len(l_filters)
+                sub_R = R[:, begin_R: begin_R + n].contiguous().view(batch, mul_out, mul_in, -1)  # [batch, mul_out, mul_in, l_filter]
+                begin_R += n
+
+                sub_norm_coef = norm_coef[i, j]  # [batch]
+
+                # note: I don't know if we can vectorize this for loop because [l_filter * m_filter] cannot be put into [l_filter, m_filter]
+                K = 0
+                for k, l_filter in enumerate(l_filters):
+                    tmp = sum(2 * l + 1 for l in self.set_of_l_filters if l < l_filter)
+                    sub_Y = Y[tmp: tmp + 2 * l_filter + 1]  # [m, batch]
+
+                    C = SO3.clebsch_gordan(l_out, l_in, l_filter, cached=True, like=kernel)  # [m_out, m_in, m]
+
+                    # note: The multiplication with `sub_R` could also be done outside of the for loop
+                    K_mid = torch.einsum("ijk,kz,z->zij", C, sub_Y, sub_norm_coef)  # [batch, m_out, m_in]
+                    K += torch.einsum('zij,zuv->zuivj', K_mid, sub_R[..., k])  # [batch, mul_out, m_out, mul_in, m_in]
+
+                    # from old kernel, note that c means sub_norm_coef
+                    # note: The multiplication with `c` could also be done outside of the for loop
+                    # K += torch.einsum("ijk,kz,zuv->zuivj", (C, Y, c[..., k]))  # [batch, mul_out, m_out, mul_in, m_in]
+                # K.mul_(norm_coef[i, j, (radii == 0).type(torch.long)].view(batch, 1, 1, 1, 1).expand_as(K))
+
+                if K is not 0:
+                    kernel[:, s_out, s_in] = K.contiguous().view_as(kernel[:, s_out, s_in])
+
         return kernel.view(*size, kernel.shape[1], kernel.shape[2])
 
 
@@ -269,4 +319,3 @@ class HalfKernel(Kernel):
         kern2 = super(HalfKernel, self).forward(r2)
         kernel = torch.cat([kern1, kern2], dim=0)
         return kernel.view(*size, kernel.shape[1], kernel.shape[2])
-
