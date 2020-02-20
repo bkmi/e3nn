@@ -129,7 +129,7 @@ class Kernel(torch.nn.Module):
         n_out = SO3.dimRs(self.Rs_out)
 
         kernel = Y.new_zeros(batch, n_out, n_in)
-        torch.cuda.empty_cache() # TODO This function can really slow things down, but it also might help.
+        # torch.cuda.empty_cache() # TODO This function can really slow things down, but it also might help.
 
         # note: for the normalization we assume that the variance of R[i] is one
         begin_R = 0
